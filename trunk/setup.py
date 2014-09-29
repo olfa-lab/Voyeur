@@ -3,7 +3,7 @@
 from setuptools import setup
 
 setup(name='voyeur',
-      version='1.0',
+      version='1.2',
       description='Framework for Behavioral Trial-Based Protocols and Data Acquisition/Display',
       author='Rinberg lab, Admir Resulaj, Physion Consulting',
       author_email='Admir.Resulaj@nyumc.org',
