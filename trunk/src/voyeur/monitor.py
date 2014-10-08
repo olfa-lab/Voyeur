@@ -12,9 +12,8 @@ from voyeur.exceptions import (
     NonOperationException
     )
     
-from PyQt4.QtCore import QThread
+from PyQt4.QtCore import QThread, QTimer
 from PyQt4.Qt import  QApplication
-from enthought.pyface.timer.api import Timer
 from enthought.traits.api import (
     HasTraits,
     Instance,
@@ -85,6 +84,7 @@ class Monitor(HasTraits):
     # Internal
     running = Bool(False)
     recording = Bool(False)
+    paused = Bool(False)
     eot = Event() # queue for dispatch on ui thread
     push_event = Event() # dispatch immediately on ui thread
     push_streaming = Event() # dispatch immediately on ui thread
@@ -92,13 +92,13 @@ class Monitor(HasTraits):
     current_trial_group = Instance(object)
     current_trial_parameters = Instance(object)
     acquisition_thread = Instance(AcquisitionThread)
-
+    _iti_timer = Instance(QTimer)
     processed = 0
     acquired = 0
     _acquiringlock = False
     _eventlock = False
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, send_trial_number = False, *args, **kwargs):
         HasTraits.__init__(self, *args, **kwargs)
         
         # events -- dispatched on UI thread
@@ -116,7 +116,7 @@ class Monitor(HasTraits):
         self.serial_queue1 = SerialCallThread(monitor=self, max_queue_size=1)        
         try:
             if self.serial1 is None:
-                self.serial1 = SerialPort(self.configFile, board='board1', port='port1')
+                self.serial1 = SerialPort(self.configFile, board='board1', port='port1', send_trial_number = send_trial_number)
         except SerialException as e:
             print('Serial Port 1 Error')
             print('Serial exception. Message: ', e.msg, ' Path: ', e.path)
@@ -176,12 +176,18 @@ class Monitor(HasTraits):
     def start_acquisition(self):
         self.running = True
         self.recording = True
+        self.paused = False
         self.start_new_trial()
 
     def stop_acquisition(self):
         """Stops acquisition"""
+        if self._iti_timer:
+            self._iti_timer.stop()
+            self._iti_timer.deleteLater()
+            self._iti_timer = None
         self.recording = False
         self.running = False
+        self.paused = False
         self.setup_complete = False
         if self.serial1 != None:
             self._eventlock = True
@@ -191,13 +197,25 @@ class Monitor(HasTraits):
             #self.serial_queue1.enqueue(self.serial1.close)
         self.persistor.close_database()
 
-    def pause_acquisition(self):
+    def pause_acquisition(self, graceful = False):
         """Pauses acquisition"""
+        self.paused = True
+        if self._iti_timer:
+            self._iti_timer.stop()
+            self._iti_timer.deleteLater()
+            self._iti_timer = None
+        
+        if graceful:
+            if self.serial1 != None:
+                self._eventlock = True
+                self.serial_queue1.enqueue(self.serial1.end_trial)
+                self._eventlock = False
         if self.running:
             self.recording = False
                 
     def unpause_acquisition(self):
         """Unpauses acquisition"""
+        self.paused = False
         if self.running:
             self.recording = True
             self.start_new_trial()
@@ -218,11 +236,9 @@ class Monitor(HasTraits):
                 
     def start_new_trial(self, ):
         """Start New Trial"""
-        
         # Get parameters for next trial
-        trial_parameters = self.protocol.trial_parameters()
-
-        if self.running and trial_parameters != None and self.recording:
+        if self.running and self.recording:
+            trial_parameters = self.protocol.trial_parameters()
             # Create the trial group
             self.current_trial_group = self.persistor.add_trial(self.protocol.trialNumber,
                                                                 trial_parameters.protocolParameters,
@@ -277,18 +293,27 @@ class Monitor(HasTraits):
         return
                         
     def _handle_eot(self):
-        if self.recording:
-            self.protocol.end_of_trial()
-            self._eventlock = True
-            self.serial_queue1.enqueue(self.acquire_events)
-            self._eventlock = False
+        self.protocol.end_of_trial()
+        self._eventlock = True
+        self.serial_queue1.enqueue(self.acquire_events)
+        self._eventlock = False
 
     def _run_iti(self, continuation):
         """Starts a timer with Protocol-supplied inter-trial interval. Timer
-        calls continuation when fired"""
+        calls continuation when fired
+        
+        ITI timer is an object that can be modified and queried. To check if timer is active,
+        use _iti_timer.is_active() method. To cancel timer, call _iti_timer.cancel() 
+        """
         iti_ms = self.protocol.trial_iti_milliseconds()
         #print "next start iti = ", iti_ms
-        Timer.singleShot(iti_ms, continuation)
+        if self._iti_timer:
+            self._iti_timer.stop()
+            self._iti_timer.deleteLater()
+        self._iti_timer = QTimer()
+        self._iti_timer.timeout.connect(continuation)
+        self._iti_timer.setSingleShot(True)
+        self._iti_timer.start(iti_ms)
         return
 
     def _start_acquisition_thread(self):
@@ -307,13 +332,15 @@ class Monitor(HasTraits):
 
     def _handle_push_event(self, event_tuple):
         event, persist = event_tuple
-        if persist:
-            self.persistor.insert_event(event, self.current_session_group)
+        self.persistor.insert_event(event, self.current_session_group)
         self.protocol.process_event_request(event)
-        self._run_iti(self.start_new_trial)
+        if not self.paused:
+            self._run_iti(self.start_new_trial)
 
     def _handle_push_streaming(self, streaming_tuple):
         #print "processing stream....", time.clock()
+        if not self.running:
+            return
         stream, persist = streaming_tuple
         if persist:
             self.persistor.insert_stream(stream, self.current_trial_group)

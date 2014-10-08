@@ -1,7 +1,7 @@
 import time
 import os.path
 import tables
-from numpy import array, ndarray, int32, float32
+from numpy import array, ndarray, int32, float32, int16
 from datetime import datetime
 
 # Column types
@@ -21,6 +21,7 @@ Bool = tables.BoolCol()
 # Array types
 IntArray = array([], dtype=int32)
 FloatArray = array([], dtype=float32)
+Int16Array = array([], dtype = int16)
 
 ExperimentGroup = tables.group
 ProtocolGroup = tables.group
@@ -50,9 +51,9 @@ class Persistor(object):
         """Creates an HDF5 database and defines metadata"""    
         if os.path.splitext(filename)[-1] == 'h5':
             filename = os.path.splitext(filename)[0]
-        self.h5file = tables.openFile(filename + ".h5", mode = "w")
+        self.h5file = tables.open_file(filename + ".h5", mode = "w")
         #group_name = 'animal' + str(animal_id) + '_session' + str(animal_id)
-        session_group = self.h5file.root #createGroup("/", group_name, user_metadata)
+        session_group = self.h5file.root #create_group("/", group_name, user_metadata)
         session_group._v_attrs.animal_id = animal_id
         session_group._v_attrs.rig = rig
         session_group._v_attrs.user = user
@@ -64,6 +65,7 @@ class Persistor(object):
         session_group._v_attrs.start_date = start_date
         session_group._v_attrs.timezone = timezone
         self.h5file.flush()
+        
         return session_group
 
     def create_trials(self, 
@@ -78,10 +80,11 @@ class Persistor(object):
                                         + strip_tuple_from_dict(controller_parameters_definition).items()
                                         + strip_tuple_from_dict(event_definition).items())
             
-            self.h5file.createTable(session_group,
+            self.h5file.create_table(session_group,
                                     'Trials',
                                     trial_columns_definition,
-                                    description)
+                                    description,
+                                    expectedrows = 500)
  
             self.h5file.flush()
             
@@ -94,7 +97,7 @@ class Persistor(object):
                     description):
         """Add a trial"""
         
-        trial_group = self.h5file.createGroup(session_group,
+        trial_group = self.h5file.create_group(session_group,
                                                 "Trial" + str(trial_number).zfill(4),
                                                 description)
         
@@ -106,10 +109,12 @@ class Persistor(object):
                         self.create_VLIntArray(name, IntArray, trial_group)
                     elif kind.dtype == float32:
                         self.create_VLFloatArray(name, FloatArray, trial_group)
+                    elif kind.dtype == int16:
+                        self.create_VLInt16Array(name, Int16Array, trial_group)
                     del stream_def[name]
         
         if (stream_def is not None) and len(stream_def) != 0:
-            self.h5file.createTable(trial_group,
+            self.h5file.create_table(trial_group,
                                     'Events',
                                     stream_def,
                                     "Stream Data",
@@ -127,8 +132,7 @@ class Persistor(object):
             #print key, value
             parameters[key] = value
         parameters.append()
-        session_group.Trials.flush()                        
-                                    
+        session_group.Trials.flush()
         self.h5file.flush()
         return trial_group
         
@@ -139,9 +143,9 @@ class Persistor(object):
 
         for key, value in event.iteritems():
             row[key] = value
-        
+
         row = array(row,ndmin=1)
-        trial_group.Trials.modifyRows(start=rowindex, stop=rowindex+1, rows=row)
+        trial_group.Trials.modify_rows(start=rowindex, stop=rowindex+1, rows=row)
         trial_group.Trials.flush()
         """for index in range(trial_group.Trials.nrows):
             print trial_group.Trials[index]"""
@@ -154,7 +158,7 @@ class Persistor(object):
         row = trial_group.Events.row
         for key, value in stream.iteritems():
             if type(value) == ndarray:
-                array = self.h5file.getNode(trial_group, key)
+                array = self.h5file.get_node(trial_group, key)
                 array.append(value)
             elif value is None:
                 continue
@@ -167,11 +171,11 @@ class Persistor(object):
 
     def store_array(self, name, description, array, group):
         """Stores a homogenous array in a group"""
-        self.h5file.createArray(group, name, array, description)
+        self.h5file.create_array(group, name, array, description)
 
     def create_VLIntArray(self, name, array, group):
         """Stores a homogenous variable length integer array in a group"""
-        self.h5file.createVLArray(group,
+        self.h5file.create_vlarray(group,
                                     name,
                                     tables.Int32Atom(),
                                     "ragged array of ints",
@@ -179,9 +183,17 @@ class Persistor(object):
 
     def create_VLFloatArray(self, name, array, group):
         """Stores a homogenous variable length float array in a group"""
-        self.h5file.createVLArray(group,
+        self.h5file.create_vlarray(group,
                                     name,
                                     tables.Float32Atom(),
+                                    "ragged array of floats",
+                                    chunkshape = 512)
+
+    def create_VLInt16Array(self, name, array, group):
+        """Stores a homogenous variable length float array in a group"""
+        self.h5file.create_vlarray(group,
+                                    name,
+                                    tables.Int16Atom(),
                                     "ragged array of floats",
                                     chunkshape = 512)
                                                                     
@@ -190,7 +202,7 @@ class Persistor(object):
         if not self.h5file.isopen:
             if os.path.splitext(name)[-1] == 'h5':
                 name = os.path.splitext(name)[0]
-            self.h5file = tables.openFile(name + ".h5", mode = mode)
+            self.h5file = tables.open_file(name + ".h5", mode = mode)
                     
     def close_database(self):
         self.h5file.close()
@@ -253,6 +265,6 @@ def strip_3tuple_from_dict(dict):
     {key: (first, second, third)} => {key: third}
     """
     new_dict = {}
-    for key, (first, second, third) in dict.items(): 
+    for key, (first, second, third) in dict.items():
         new_dict[key] =  third
     return new_dict
