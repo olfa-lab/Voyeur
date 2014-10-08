@@ -140,6 +140,7 @@ class Persistor(object):
         for key, value in event.iteritems():
             row[key] = value
         
+        row = array(row,ndmin=1)
         trial_group.Trials.modifyRows(start=rowindex, stop=rowindex+1, rows=row)
         trial_group.Trials.flush()
         """for index in range(trial_group.Trials.nrows):
