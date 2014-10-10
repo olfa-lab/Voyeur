@@ -37,6 +37,12 @@ class IProtocol(IPlugin):
 
     """
 
+    # This is a placeholder for a metadata dictionary. Items in the metadata dictionary are written as attributes to the
+    # session attributes of the HDF5 file at file creation time.
+    # FUTURE: changes to this dictionary after session start will result in attribute addition or change.
+    metadata = {}
+
+
     @abc.abstractmethod
     def protocol_parameters_definition(self):
         """
@@ -159,6 +165,8 @@ class IProtocol(IPlugin):
         """A string description of the protocol"""
 
         return self.__class__.__name__ + ' protocol'
+
+
 
 class Protocol(ui.HasTraits, IProtocol):
     pass

@@ -120,35 +120,28 @@ class Monitor(HasTraits):
         except SerialException as e:
             print('Serial Port 1 Error')
             print('Serial exception. Message: ', e.msg, ' Path: ', e.path)
-        
+
         self.protocol_name = self.serial1.request_protocol_name()
-        self.start_date = self.persistor.timestamp()
-        
-        # For debugging
-        #self.start_date = self.persistor.timestamp()
+        ### Define monitor metadata. This metadata is consistent between all protocols.
+        self.metadata = {'arduino_protocol_name': self.protocol_name,
+                         'start_date': time.mktime(time.localtime()),
+                         #todo: add VOYEUR core version hash or version number lookup.
+                         }
+
+
         
         
     def _database_file_changed(self):
+        initial_metadata = dict(self.metadata.items() + self.protocol.metadata.items())  # combine protocol and monitor metadata
         if self.serial1 != None:
             #self.serial_queue1.enqueue(self.persistor.close_database)
-            self.current_session_group = self.persistor.create_database(self.database_file,
-                                                                        self.animal_id,
-                                                                        self.session_number,
-                                                                        self.rig,
-                                                                        self.user,
-                                                                        self.experiment_notes,
-                                                                        self.voyeur_version,
-                                                                        self.usercode_version,
-                                                                        self.arduino_protocol_name,
-                                                                        self.user_protocol_name,
-                                                                        self.start_date,
-                                                                        self.timezone,
-                                                                        self.user_metadata)            
+            self.current_session_group = self.persistor.create_database(self.database_file, initial_metadata)
+
             self.persistor.create_trials(self.protocol.protocol_parameters_definition(),
                                             self.protocol.controller_parameters_definition(),
                                             self.protocol.event_definition(),
                                             self.current_session_group,
-                                            '')            
+                                            '')
         
     def _protocol_changed(self, name, old, new):
         """

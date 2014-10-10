@@ -34,36 +34,23 @@ class Persistor(object):
     
     h5file = None
 
-    def create_database(self, 
-                        filename, 
-                        animal_id,
-                        session_number,
-                        rig,
-                        user,
-                        experiment_notes,
-                        voyeur_version,
-                        usercode_version,
-                        arduino_protocol_name,
-                        user_protocol_name,
-                        start_date,
-                        timezone,
-                        user_metadata):
-        """Creates an HDF5 database and defines metadata"""    
+    def create_database(self, filename, metadata):
+        """
+        Create database file and add initial metadata attributes.
+
+        :param filename: Path to save HDF5 file.
+        :param metadata: Dict containing metadata. Metadata items will be added to root group of H5 file
+        :type filename: str
+        :type metadata: dict
+        :return: session_group
+        """
         if os.path.splitext(filename)[-1] == 'h5':
             filename = os.path.splitext(filename)[0]
         self.h5file = tables.open_file(filename + ".h5", mode = "w")
         #group_name = 'animal' + str(animal_id) + '_session' + str(animal_id)
         session_group = self.h5file.root #create_group("/", group_name, user_metadata)
-        session_group._v_attrs.animal_id = animal_id
-        session_group._v_attrs.rig = rig
-        session_group._v_attrs.user = user
-        session_group._v_attrs.experiment_notes = experiment_notes
-        session_group._v_attrs.voyeur_version = voyeur_version
-        session_group._v_attrs.usercode_version = usercode_version
-        session_group._v_attrs.arduino_protocol_name = arduino_protocol_name
-        session_group.user_protocol_name = user_protocol_name
-        session_group._v_attrs.start_date = start_date
-        session_group._v_attrs.timezone = timezone
+        for k, v in metadata.iteritems():
+            session_group._f_setattr(k, v)
         self.h5file.flush()
         
         return session_group
