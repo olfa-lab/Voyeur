@@ -331,7 +331,7 @@ def convert_format(parameters):
     values = parameters.copy()
     for key, (index, format, value) in values.items():
         if type(format) == type(db.Int):
-            values[key] = (index, 'I', value)
+            values[key] = (index, 'i', value)  # signed 32 bit int (arduino long)
         elif type(format) == type(db.Int16):
             values[key] = (index, 'h', value)
         elif type(format) == type(db.Float):
