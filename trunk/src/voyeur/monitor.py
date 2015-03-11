@@ -1,6 +1,6 @@
 import os, time
 import getpass
-from enthought.etsconfig.etsconfig import ETSConfig
+from traits.etsconfig.etsconfig import ETSConfig
 ETSConfig.toolkit = 'qt4'
 
 from voyeur.db import Persistor
@@ -14,7 +14,7 @@ from voyeur.exceptions import (
     
 from PyQt4.QtCore import QThread, QTimer
 from PyQt4.Qt import  QApplication
-from enthought.traits.api import (
+from traits.api import (
     HasTraits,
     Instance,
     Bool,

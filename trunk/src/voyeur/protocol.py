@@ -1,5 +1,5 @@
 import abc
-import enthought.traits.api as ui
+import traits.api as ui
 from datetime import datetime
 from voyeur.plugins import IPlugin
 
