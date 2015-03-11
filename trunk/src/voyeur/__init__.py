@@ -1,2 +1,2 @@
-from enthought.etsconfig.etsconfig import ETSConfig
+from traits.etsconfig.etsconfig import ETSConfig
 ETSConfig.toolkit = 'qt4'

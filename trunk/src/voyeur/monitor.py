@@ -1,6 +1,6 @@
 import os, time
 import getpass
-from enthought.etsconfig.etsconfig import ETSConfig
+from traits.etsconfig.etsconfig import ETSConfig
 ETSConfig.toolkit = 'qt4'
 
 from voyeur.db import Persistor
@@ -14,7 +14,7 @@ from voyeur.exceptions import (
     
 from PyQt4.QtCore import QThread, QTimer
 from PyQt4.Qt import  QApplication
-from enthought.traits.api import (
+from traits.api import (
     HasTraits,
     Instance,
     Bool,
@@ -29,6 +29,11 @@ from enthought.traits.api import (
 
 class AcquisitionThread(QThread):
 
+    def __init__(self, monitor, serial_queue, *args, **kwargs):
+        super(AcquisitionThread, self).__init__(*args, **kwargs)
+        self.monitor = monitor
+        self.serial_queue = serial_queue
+
     def acquire_stream(self):
         try:
             #print "Acquiring stream: "
@@ -40,9 +45,10 @@ class AcquisitionThread(QThread):
         except ProtocolException as e:
             #print('Protocol exception. Message:', e.msg, ' Protocol: ', e.protocol)
             pass
-        except:
+        except Exception as e:
             print "Exception in acquisition thread"
             self.monitor.stop_acquisition()
+            raise e
 
     def run(self):
         # start streaming acquisition
@@ -127,7 +133,7 @@ class Monitor(HasTraits):
                          'start_date': time.mktime(time.localtime()),
                          #todo: add VOYEUR core version hash or version number lookup.
                          }
-
+        self.stream_definition = None
 
         
         
@@ -257,18 +263,17 @@ class Monitor(HasTraits):
 
 
     def acquire_stream(self):
-        """Run stream acquisition"""      
+        """Run stream acquisition"""
+        if not self.stream_definition:
+            self.stream_definition = self.protocol.stream_definition()
         try:
-            stream = self.serial1.request_stream(self.protocol.stream_definition())
-            #print "Stream acquired from serial: ", stream
+            stream = self.serial1.request_stream(self.stream_definition)
             if stream:
                 self._acquiringlock = True
                 self.push_streaming = (stream, self.recording)
                 self.acquired += 1
-                #print "Total streams acquired: ", self.acquired
             else:
                 raise ProtocolException(self.protocol.protocol_description(), "Stream data is null.")
-                #print "Stream empty exception raised: ", time.clock()
         except NonOperationException:
             raise ProtocolException(self.protocol.protocol_description(), "NonOperationException.")
         except EndOfTrialException as ex:
@@ -276,8 +281,7 @@ class Monitor(HasTraits):
             if stream:
                 self._acquiringlock = True
                 self.push_streaming = (stream, self.recording)
-                #self.acquired += 1
-                #print "Total streams acquired: ", self.acquired
+
             raise ex
         while(self._acquiringlock):
             if self.running == False or self._eventlock:
@@ -311,9 +315,7 @@ class Monitor(HasTraits):
 
     def _start_acquisition_thread(self):
         """Spawns the acquisition thread"""
-        self.acquisition_thread = AcquisitionThread()
-        self.acquisition_thread.serial_queue = self.serial_queue1
-        self.acquisition_thread.monitor = self
+        self.acquisition_thread = AcquisitionThread(self, self.serial_queue1)
         self.acquisition_thread.start()
             
     def _start_acquisition(self, trial_parameters):

@@ -1,17 +1,21 @@
 import os
 import time
 import struct
-import binascii
-import glob
 import db
 import platform
 from Queue import Queue
 from PyQt4.QtCore import QThread
-from numpy import array, int32, float32, append, ndarray, int16
+from numpy import int32, float32, append, ndarray, int16, fromstring, uint16, uint32, zeros
 from serial import Serial, SerialException
 from configobj import ConfigObj
 import voyeur.exceptions as ex
 
+ARDUINO_DATATYPES = {
+    'int': int16,
+    'unsigned int': uint16,
+    'long': int32,
+    'unsigned long': uint32,
+}
 
 class SerialCallThread(QThread):
         '''
@@ -89,25 +93,23 @@ class SerialPort(object):
             print(e)
         return line
 
-    def read_byte_streams(self, num_bytes,tries=8):
+    def read_byte_streams(self, num_bytes, tries=8):
         count = 0
-        while self.serial.inWaiting() != num_bytes and count < tries: #wait until number of bytes in recieve buffer is equal to expected number of bytes.
+        while self.serial.inWaiting() < num_bytes and count < tries: #wait until number of bytes in recieve buffer is equal to expected number of bytes.
             # Reading the serial stream is part of the separate serial acquisition thread and will not break or make the UI lag
             if tries <= 8:
                 time.sleep(0.01+.01*count**2)# blocks for 1 second, with exponentially increasing checks.(10ms,20ms,50ms,100ms...)
             else:    # If tries was higher than 8, wait the minimum set time of 10ms
                 time.sleep(0.01)
             count += 1
-            
-        if self.serial.inWaiting() == num_bytes: # when buffer is ready, read and return.
-            bytestream = self.serial.read(num_bytes)
-            if len(bytestream) == num_bytes:
-                return bytestream
-        # TODO: Take partially transmitted data but warn of data loss?? Implement a retry protocol?
-        else: # if buffer never fills to expected value, do not read the packet, instead flush the incoming serial of partial packet and return.
-            self.serial.flushInput()
-            print 'ERROR in serial stream acquisition: not enough bytes transmitted by arduino'
-            return None
+        else:
+            if self.serial.inWaiting() >= num_bytes:
+                b = self.serial.read(num_bytes)
+            else:
+                print 'ERROR in serial stream acquisition: not enough bytes transmitted by arduino'
+                self.serial.flushInput()
+                b = None
+        return b
 
 
     def write(self, data):
@@ -117,7 +119,7 @@ class SerialPort(object):
     def request_stream(self, stream_def, tries=10):
         """Reads stream"""
         #print "Stream request to serial: ", time.clock()
-        for i in range(tries):
+        for i in xrange(tries):
             #print "try: ", i
             self.write(chr(87))
             packets = self.read_line()
@@ -139,7 +141,7 @@ class SerialPort(object):
 
     def request_event(self, event_def, tries=10):
         """Reads event data"""
-        for i in range(tries):
+        for i in xrange(tries):
             self.write(chr(88))
             packets = self.read_line()
             #print packets
@@ -155,7 +157,7 @@ class SerialPort(object):
         values = params.values()
         values.sort()
         #print "Starting trial..."
-        for i in range(tries):
+        for i in xrange(tries):
             self.write(chr(90))
             for index, format, value in values:
                 #print value
@@ -169,7 +171,7 @@ class SerialPort(object):
     def user_def_command(self, command, tries=10):
         """Sends a user defined command
            Args: command is a string representing a command issued to arduino"""
-        for i in range(tries):
+        for i in xrange(tries):
             self.write(chr(86))
             self.write(command)
             self.write("\r")
@@ -180,7 +182,7 @@ class SerialPort(object):
 
     def end_trial(self, tries=10):
         """Sends end command"""
-        for i in range(tries):
+        for i in xrange(tries):
             self.write(chr(89))
             line = self.read_line()
             #print line
@@ -191,7 +193,7 @@ class SerialPort(object):
 
     def request_protocol_name(self, tries=10):
         """Get protocal name from arduino (gives the name of the code that is running)"""
-        for i in range(tries):
+        for i in xrange(tries):
             self.write(chr(91))
             line = self.read_line()
             if line and int(line[:1]) == 6:
@@ -226,7 +228,6 @@ class SerialPort(object):
 def parse_serial(packets, protocol_def, serial_obj):
     """Parse serial read"""
     data = {}
-    eot = False
     #print protocol_def
     #print packets
     if packets:
@@ -250,79 +251,51 @@ def parse_serial(packets, protocol_def, serial_obj):
                             #print data[key]
                     #print data
                 elif handshake == 5:
-                    eot = True
+                    exp = ex.EndOfTrialException('End of trial')
+                    exp.last_read = data
+                    raise exp
                 elif handshake == 6:
-                    bytes_per_stream = [];
+
                     num_streams = int(payload.pop(1)) #read and discard this value to maintain consistency with the stream_definition numbering.
+                    bytes_per_stream = zeros(num_streams, dtype=int)
                     if len(payload) < num_streams + 1:
                         print "oh shit, you don't have enough stream length specifiers"
-                    for stream_number in range(num_streams):
-                        bytes_per_stream.append(int(payload[1+stream_number]))
-                    bytes_to_read = sum(bytes_per_stream)
+                        raise SerialException("You don't have enough stream length specifiers, check your sketch.")
+                    for stream_number in xrange(num_streams):
+                        bytes_per_stream[stream_number] = int(payload[1+stream_number])
+                    bytes_to_read = bytes_per_stream.sum()
                     bytestream = serial_obj.read_byte_streams(bytes_to_read)
                     
-                    if bytestream == None: # failure, no streams recieved,
+                    if bytestream is None: # failure, no streams recieved,
+                        print 'Lost packet: no data received'
                         for key, (index, arduinoType, kind) in protocol_def.items():
                             data[key] = None
-                        print 'Lost packet: no data received'
-                    
-                    byte_index_start = 0
-                    
-                    for key, (index, arduinoType, kind) in protocol_def.items():
-                        #data[key] =  convert_type(kind, payload[index])
-                        if bytes_per_stream[index-1] == 0: # expecting empty stream, so set output to None.
-                            data[key] = None
-                            continue
-                        
-                        byte_index_start = sum(bytes_per_stream[:(index-1)])
-                        byte_index_end = sum(bytes_per_stream[:(index)])
-                        stream_bytes = bytestream[byte_index_start:byte_index_end]
-                        unpacked_stream =[]
-                        
-                        ## unpack the bytes into integers based on the type specified in the stream_definition.
-                        if arduinoType == 'int': # h for short integers
-                            num_vals = len(stream_bytes)/2
-                            t = "<%ih" % (num_vals) # little-endian,number of integers,signed int
-                            vals = struct.unpack(t,stream_bytes)
-                            unpacked_stream = array(vals,dtype = int16)
-                                
-                        elif arduinoType == 'unsigned int': #H 
-                            num_vals = len(stream_bytes)/2
-                            t = "<%iH" % (num_vals) # little-endian(<),number of integers,unsigned int (H)
-                            vals = struct.unpack(t,stream_bytes)
-                            unpacked_stream = list(vals)
-                            
-                        elif arduinoType == 'long': # i
-                            num_vals = len(stream_bytes)/4
-                            t = "<%ii" % (num_vals) # little-endian(<),number of integers,unsigned int (i)
-                            vals = struct.unpack(t,stream_bytes)
-                            unpacked_stream = list(vals)
-                                
-                        elif arduinoType == 'unsigned long': #I
-                            num_vals = len(stream_bytes)/4
-                            t = "<%iI" % (num_vals) # little-endian(<),number of integers,unsigned int (H)
-                            vals = struct.unpack(t,stream_bytes)   
-                            unpacked_stream = list(vals)                            
-                        
-                        if type(kind) != type(db.Int): 
-                            if type(kind) == ndarray:
-                                if kind.dtype == int16:
-                                    unpacked_stream = append(db.Int16Array, unpacked_stream)
-                                elif kind.dtype == float32:
-                                    unpacked_stream = [float(i) for i in unpacked_stream]
-                                    unpacked_stream = append(db.FloatArray, unpacked_stream)
-                                elif kind.dtype == int32:
-                                    unpacked_stream = append(db.IntArray, unpacked_stream)
-                                
-                        
-                        elif len(unpacked_stream) == 1:
-                            unpacked_stream = int(unpacked_stream[0])
-                                
-                        data[key] = unpacked_stream;         
-        if eot:
-            exp = ex.EndOfTrialException('End of trial')
-            exp.last_read = data
-            raise exp
+                    else:
+                        for key, (index, arduinoType, kind) in protocol_def.items():
+                            if bytes_per_stream[index-1] == 0: # expecting empty stream, so set output to None.
+                                data[key] = None
+                                continue
+
+                            byte_index_start = sum(bytes_per_stream[:(index-1)])
+                            byte_index_end = sum(bytes_per_stream[:(index)])
+                            stream_bytes = bytestream[byte_index_start:byte_index_end]
+
+                            unpacked_stream = fromstring(stream_bytes, ARDUINO_DATATYPES[arduinoType])
+
+                            if type(kind) != type(db.Int):
+                                if type(kind) == ndarray:
+                                    if kind.dtype == int16:
+                                        unpacked_stream = append(db.Int16Array, unpacked_stream)
+                                    elif kind.dtype == float32:
+                                        unpacked_stream = [float(i) for i in unpacked_stream]
+                                        unpacked_stream = append(db.FloatArray, unpacked_stream)
+                                    elif kind.dtype == int32:
+                                        unpacked_stream = append(db.IntArray, unpacked_stream)
+                            elif len(unpacked_stream) == 1:
+                                unpacked_stream = int(unpacked_stream[0])
+
+                            data[key] = unpacked_stream
+
     return data
 
 
