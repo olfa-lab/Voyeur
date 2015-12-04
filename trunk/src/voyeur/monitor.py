@@ -45,10 +45,11 @@ class AcquisitionThread(QThread):
         except ProtocolException as e:
             #print('Protocol exception. Message:', e.msg, ' Protocol: ', e.protocol)
             pass
-        except Exception as e:
-            print "Exception in acquisition thread"
-            self.monitor.stop_acquisition()
-            raise e
+#         except Exception as e:
+#             raise e
+#             print "Exception in acquisition thread"
+#             self.monitor.stop_acquisition()
+
 
     def run(self):
         # start streaming acquisition

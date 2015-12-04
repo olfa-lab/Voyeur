@@ -234,7 +234,11 @@ def parse_serial(packets, protocol_def, serial_obj):
         for packet in packets.split('*'):
             if packet and packet != '\r\n':
                 payload = packet.split(',')
-                handshake = int(payload[0])
+                try:
+                    handshake = int(payload[0])
+                except ValueError as e:
+                    print payload
+                    raise e
                 #print "handshake:", handshake
                 if handshake == 1:
                     if protocol_def:
@@ -255,14 +259,18 @@ def parse_serial(packets, protocol_def, serial_obj):
                     exp.last_read = data
                     raise exp
                 elif handshake == 6:
-
-                    num_streams = int(payload.pop(1)) #read and discard this value to maintain consistency with the stream_definition numbering.
+                    num_streams = int(payload[1]) #read and discard this value to maintain consistency with the stream_definition numbering.
                     bytes_per_stream = zeros(num_streams, dtype=int)
                     if len(payload) < num_streams + 1:
                         print "oh shit, you don't have enough stream length specifiers"
                         raise SerialException("You don't have enough stream length specifiers, check your sketch.")
                     for stream_number in xrange(num_streams):
-                        bytes_per_stream[stream_number] = int(payload[1+stream_number])
+                        try:
+                            bytes_per_stream[stream_number] = int(payload[stream_number+2])
+                        except ValueError as e:
+                            print "stream number {0}".format(stream_number)
+                            print payload
+                            raise e
                     bytes_to_read = bytes_per_stream.sum()
                     bytestream = serial_obj.read_byte_streams(bytes_to_read)
                     
