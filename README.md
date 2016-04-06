@@ -19,6 +19,8 @@ For more on HDF5: <http://www.hdfgroup.org/HDF5/doc/H5.intro.html>
 
 Documentation
 =================
+A preliminary installation document can be found [here](trunk/docs/installation.md).
+
 While we build the intial documentation and update it to the appropriate version, please checkout the initial description of the system:
 trunk/docs/sphinx/_build/singlehtml
 
